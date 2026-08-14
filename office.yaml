@@ -1,0 +1,55 @@
+office:
+  name: "Novoa Dental"
+  phone: ""
+  address: ""
+  website: ""
+  timezone: "America/New_York"
+
+receptionist:
+  name: "Emma"
+  greeting: >
+    Thank you for calling Novoa Dental.
+    How may I help you today?
+
+providers:
+  - id: "dr_novoa"
+    name: "Dr. Calixto Novoa"
+    specialty: "General Dentistry"
+    services: []
+
+office_hours:
+  monday:    { open: "08:00", close: "17:00" }
+  tuesday:   { open: "08:00", close: "17:00" }
+  wednesday: { open: "08:00", close: "17:00" }
+  thursday:  { open: "08:00", close: "17:00" }
+  friday:    { open: "08:00", close: "15:00" }
+  saturday:  null
+  sunday:    null
+
+appointments:
+  scheduling_system: "google_calendar"
+  calendar_id: "primary"
+  default_duration_minutes: 60
+  slot_increment_minutes: 30
+  default_buffer_minutes: 0
+
+fallback:
+  phone: "305-773-3604"
+  enabled: true
+
+knowledge:
+  services: []
+  insurance: ""
+  parking: ""
+  new_patient_instructions: ""
+  office_policies: ""
+  additional_facts: []
+lunch:
+  enabled: true
+  start: "12:00"
+  end: "13:00"
+
+appointment_types:
+  default:
+    duration_minutes: 60
+    buffer_minutes: 0
