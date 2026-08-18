@@ -1,15 +1,17 @@
 office:
   name: "Novoa Dental"
-  phone: ""
-  address: ""
+  phone: "(305) 552-8033"
+  address: "9280 SW 72nd St, Ste 101, Miami, FL 33173"
   website: ""
   timezone: "America/New_York"
 
 receptionist:
-  name: "Emma"
+  name: "Claudia"
   greeting: >
-    Thank you for calling Novoa Dental.
+    Thank you for calling Dr. Novoa's office.
+    I'm Claudia, the office's AI assistant.
     How may I help you today?
+    Hablo español, mwen pale Kreyòl, também falo português.
 
 providers:
   - id: "dr_novoa"
@@ -22,9 +24,65 @@ office_hours:
   tuesday:   { open: "08:00", close: "17:00" }
   wednesday: { open: "08:00", close: "17:00" }
   thursday:  { open: "08:00", close: "17:00" }
-  friday:    { open: "08:00", close: "15:00" }
-  saturday:  null
+  friday:    { open: "08:00", close: "13:00" }
+  saturday:  { open: "08:00", close: "13:00" }
   sunday:    null
+
+procedures:
+
+  - id: cleaning
+    name: "Dental Cleaning"
+    duration_minutes: 45
+
+  - id: emergency_exam
+    name: "Emergency Exam"
+    duration_minutes: 30
+
+  - id: new_patient_exam
+    name: "New Patient Exam"
+    duration_minutes: 60
+
+  - id: crown
+    name: "Dental Crown"
+    duration_minutes: 90
+
+  - id: bridge
+    name: "Dental Bridge"
+    duration_minutes: 90
+
+  - id: filling
+    name: "Dental Filling"
+    duration_minutes: 60
+
+  - id: root_canal
+    name: "Root Canal"
+    duration_minutes: 90
+
+  - id: extraction
+    name: "Tooth Extraction"
+    duration_minutes: 60
+
+  - id: implant
+    name: "Dental Implant"
+    duration_minutes: 90
+
+  - id: veneer
+    name: "Dental Veneers"
+    duration_minutes: 90
+
+  - id: whitening
+    name: "Teeth Whitening"
+    duration_minutes: 60
+
+  - id: invisalign
+    name: "Invisalign Consultation"
+    duration_minutes: 60
+
+# ------------------------------------------------------------------
+# PROCEDURES
+# The durations below are temporary defaults for development.
+# They will be replaced with office-specific values after validation.
+# ------------------------------------------------------------------
 
 appointments:
   scheduling_system: "google_calendar"

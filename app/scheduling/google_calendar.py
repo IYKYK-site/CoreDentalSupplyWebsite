@@ -74,6 +74,10 @@ class GoogleCalendarScheduler(Scheduler):
         if not window:
             return []
 
+        now = datetime.now(self.tz)
+        requested_date = datetime.fromisoformat(date).date()
+        is_today = requested_date == now.date()
+
         open_dt, close_dt = window
 
         body = {
@@ -146,6 +150,9 @@ class GoogleCalendarScheduler(Scheduler):
         cur = open_dt
 
         while cur + duration <= close_dt:
+            if is_today and cur <= now:
+                cur += step
+                continue
             appointment_end = cur + duration
 
             # Include the required post-appointment buffer
@@ -162,32 +169,121 @@ class GoogleCalendarScheduler(Scheduler):
             cur += step
 
         return slots
+    def find_next_available_time(
+        self,
+        preferred_time: str,
+        provider_id: str | None = None,
+        duration_minutes: int | None = None,
+        buffer_minutes: int | None = None,
+        days_to_search: int = 30,
+    ):
+        """
+        Find the next available appointment that starts at a specific time.
 
-    def create_appointment(self, patient_name, patient_phone, provider_id, start_iso, duration_minutes=None, reason=""):
+        preferred_time must be HH:MM, for example "15:00".
+        """
+
+        now = datetime.now(self.tz)
+
+        preferred_hour, preferred_minute = map(
+            int,
+            preferred_time.split(":")
+        )
+
+        for day_offset in range(days_to_search + 1):
+            search_date = (now.date() + timedelta(days=day_offset))
+
+            slots = self.get_available_slots(
+                date=search_date.isoformat(),
+                provider_id=provider_id,
+                duration_minutes=duration_minutes,
+                buffer_minutes=buffer_minutes,
+            )
+
+            for slot in slots:
+                if (
+                    slot.start.hour == preferred_hour
+                    and slot.start.minute == preferred_minute
+                ):
+                    return slot
+
+        return None
+    def create_appointment(
+        self,
+        patient_name,
+        patient_phone,
+        patient_dob,
+        provider_id,
+        start_iso,
+        duration_minutes=None,
+        reason="",
+    ):
         start = datetime.fromisoformat(start_iso)
+
         if start.tzinfo is None:
             start = start.replace(tzinfo=self.tz)
-        duration = duration_minutes or self.config.appointments.default_duration_minutes
+
+        duration = (
+            duration_minutes
+            or self.config.appointments.default_duration_minutes
+        )
+
         end = start + timedelta(minutes=duration)
+
+        description = f"""PATIENT INFORMATION
+
+    Name: {patient_name}
+    Date of Birth: {patient_dob}
+    Phone: {patient_phone}
+
+    Reason / Procedure: {reason or "Not specified"}
+
+    Created by: Claudia AI Receptionist
+    """
 
         event = {
             "summary": f"Dental Appointment - {patient_name}",
-            "description": reason,
-            "start": {"dateTime": start.isoformat(), "timeZone": self.config.office.timezone},
-            "end": {"dateTime": end.isoformat(), "timeZone": self.config.office.timezone},
+            "description": description,
+
+            "start": {
+                "dateTime": start.isoformat(),
+                "timeZone": self.config.office.timezone,
+            },
+
+            "end": {
+                "dateTime": end.isoformat(),
+                "timeZone": self.config.office.timezone,
+            },
+
             "extendedProperties": {
                 "private": {
                     "patient_phone": patient_phone,
+                    "patient_dob": patient_dob,
                     "provider_id": provider_id,
                     "source": "core-ai-receptionist-poc",
                 }
             },
         }
-        created = self.service.events().insert(calendarId=self.calendar_id, body=event).execute()
+
+        created = (
+            self.service.events()
+            .insert(
+                calendarId=self.calendar_id,
+                body=event,
+            )
+            .execute()
+        )
+
         return self._to_appointment(created)
 
-    def find_appointments(self, patient_name="", patient_phone=""):
+    def find_appointments(
+        self,
+        patient_name="",
+        patient_phone="",
+        patient_dob="",
+    ):
         now = datetime.now(self.tz) - timedelta(days=1)
+
         kwargs = {
             "calendarId": self.calendar_id,
             "timeMin": now.isoformat(),
@@ -197,13 +293,25 @@ class GoogleCalendarScheduler(Scheduler):
         }
         if patient_phone:
             kwargs["privateExtendedProperty"] = f"patient_phone={patient_phone}"
+
         events = self.service.events().list(**kwargs).execute().get("items", [])
+
         out = []
+
         for event in events:
             appt = self._to_appointment(event)
-            if patient_name and patient_name.lower() not in appt.patient_name.lower():
+
+            if patient_name and patient_name.strip().lower() != appt.patient_name.strip().lower():
                 continue
+
+            private_props = event.get("extendedProperties", {}).get("private", {})
+            stored_dob = private_props.get("patient_dob", "")
+
+            if patient_dob and stored_dob != patient_dob:
+                continue
+
             out.append(appt)
+
         return out
 
     def reschedule_appointment(self, appointment_id, new_start_iso):

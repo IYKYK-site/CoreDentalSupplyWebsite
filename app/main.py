@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import Response
 from dotenv import load_dotenv
+from .devlog import devlog
 
 from .config import load_config
 from .scheduling.google_calendar import GoogleCalendarScheduler
@@ -61,6 +62,11 @@ def debug_availability(date: str, provider_id: str = ""):
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def incoming_call(request: Request):
+    form = await request.form()
+    caller_number = form.get("From", "Unknown")
+
+    devlog("CALL", f"Incoming call from: {caller_number}")
+
     public_url = os.environ["PUBLIC_URL"].rstrip("/")
     ws_url = public_url.replace("https://", "wss://").replace("http://", "ws://") + "/media-stream"
 
@@ -69,6 +75,7 @@ async def incoming_call(request: Request):
   <Connect>
     <Stream url="{ws_url}" />
   </Connect>
+  <Hangup/>
 </Response>"""
     return Response(content=xml, media_type="application/xml")
 

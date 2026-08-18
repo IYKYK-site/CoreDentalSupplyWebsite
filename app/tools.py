@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 from .config import OfficeConfig
 from .scheduling.base import Scheduler
+from .devlog import devlog
 
 
 def tool_definitions():
@@ -28,11 +29,15 @@ def tool_definitions():
                 "properties": {
                     "patient_name": {"type": "string"},
                     "patient_phone": {"type": "string"},
+                    "patient_dob": {
+                        "type": "string",
+                        "description": "Patient date of birth in MM/DD/YYYY format."
+                    },
                     "provider_id": {"type": "string"},
                     "start_iso": {"type": "string", "description": "ISO-8601 local datetime"},
                     "reason": {"type": "string"},
                 },
-                "required": ["patient_name", "patient_phone", "provider_id", "start_iso"],
+                "required": ["patient_name", "patient_phone", "patient_dob", "provider_id", "start_iso"],
             },
         },
         {
@@ -44,7 +49,30 @@ def tool_definitions():
                 "properties": {
                     "patient_name": {"type": "string"},
                     "patient_phone": {"type": "string"},
+                    "patient_dob": {
+                        "type": "string",
+                        "description": "Patient date of birth in MM/DD/YYYY format."
+                    },
                 },
+                "required": [
+                    "patient_name",
+                    "patient_phone",
+                    "patient_dob",
+                ],
+            },
+        },
+        
+        {
+            "type": "function",
+            "name": "end_call",
+            "description": (
+                "End the phone call only after the caller clearly indicates "
+                "they are finished and you have already said a brief goodbye."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
         {
@@ -70,6 +98,39 @@ def tool_definitions():
                 "required": ["appointment_id"],
             },
         },
+            {
+            "type": "function",
+            "name": "find_next_available_time",
+            "description": (
+                "Find the next available appointment on any future day "
+                "that starts at a specific preferred time."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "preferred_time": {
+                        "type": "string",
+                        "description": "Preferred start time in HH:MM 24-hour format, for example 15:00."
+                    },
+                    "provider_id": {
+                        "type": "string"
+                    },
+                    "duration_minutes": {
+                        "type": "integer"
+                    },
+                    "buffer_minutes": {
+                        "type": "integer"
+                    },
+                    "days_to_search": {
+                        "type": "integer",
+                        "description": "How many future days to search. Default is 30."
+                    }
+                },
+                "required": [
+                    "preferred_time"
+                ]
+            }
+        }, 
     ]
 
 
@@ -79,22 +140,100 @@ def execute_tool(scheduler: Scheduler, name: str, args: dict) -> dict:
         return {"slots": [{"start": s.start.isoformat(), "end": s.end.isoformat()} for s in slots[:8]]}
 
     if name == "create_appointment":
+        patient_name = args["patient_name"]
+        patient_phone = args["patient_phone"]
+        patient_dob = args["patient_dob"]
+        provider_id = args["provider_id"]
+        start_iso = args["start_iso"]
+
+        devlog("CALL", f"Caller name: {patient_name}")
+        devlog("CALL", f"Caller phone: {patient_phone}")
+        devlog("CALL", f"Caller DOB: {patient_dob}")
+        devlog("CALENDAR", f"Requested appointment: {start_iso}")
+        devlog("CALENDAR", "Creating appointment...")
+
         a = scheduler.create_appointment(
-            args["patient_name"], args["patient_phone"], args["provider_id"],
-            args["start_iso"], reason=args.get("reason", "")
+            patient_name,
+            patient_phone,
+            patient_dob,
+            provider_id,
+            start_iso,
+            reason=args.get("reason", "")
         )
+
+        devlog(
+            "CALENDAR",
+            f"Appointment created: {patient_name} | "
+            f"{patient_phone} | {a.start.isoformat()}"
+        )
+
         return {"appointment": appointment_dict(a)}
 
     if name == "find_appointment":
-        items = scheduler.find_appointments(args.get("patient_name", ""), args.get("patient_phone", ""))
+        items = scheduler.find_appointments(
+            patient_name=args.get("patient_name", ""),
+            patient_phone=args.get("patient_phone", ""),
+            patient_dob=args.get("patient_dob", ""),
+        )
         return {"appointments": [appointment_dict(a) for a in items]}
 
     if name == "reschedule_appointment":
-        a = scheduler.reschedule_appointment(args["appointment_id"], args["new_start_iso"])
+        devlog(
+            "CALENDAR",
+            f"Rescheduling appointment {args['appointment_id']} "
+            f"to {args['new_start_iso']}"
+        )
+
+        a = scheduler.reschedule_appointment(
+            args["appointment_id"],
+            args["new_start_iso"]
+        )
+
+        devlog(
+            "CALENDAR",
+            f"Appointment rescheduled to: {a.start.isoformat()}"
+        )
+
         return {"appointment": appointment_dict(a)}
 
     if name == "cancel_appointment":
-        return {"cancelled": scheduler.cancel_appointment(args["appointment_id"])}
+        devlog(
+            "CALENDAR",
+            f"Cancelling appointment: {args['appointment_id']}"
+        )
+
+        result = scheduler.cancel_appointment(
+            args["appointment_id"]
+        )
+
+        devlog("CALENDAR", "Appointment cancelled.")
+
+        return {"cancelled": result}
+    if name == "find_next_available_time":
+        slot = scheduler.find_next_available_time(
+            preferred_time=args["preferred_time"],
+            provider_id=args.get("provider_id"),
+            duration_minutes=args.get("duration_minutes"),
+            buffer_minutes=args.get("buffer_minutes"),
+            days_to_search=args.get("days_to_search", 30),
+        )
+
+        if slot is None:
+            return {
+                "found": False,
+                "message": "No matching appointment time was found in the search window."
+            }
+
+        return {
+            "found": True,
+            "slot": {
+                "start": slot.start.isoformat(),
+                "end": slot.end.isoformat(),
+            }
+        }
+        if name == "end_call":
+            devlog("CALL", "End call requested by Claudia.")
+            return {"end_call": True}
 
     raise ValueError(f"Unknown tool: {name}")
 

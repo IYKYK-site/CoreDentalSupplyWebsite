@@ -52,6 +52,15 @@ class RealtimeTwilioBridge:
                             "type": "input_audio_buffer.append",
                             "audio": msg["media"]["payload"],
                         }))
+                    elif event == "mark":
+                        mark_name = msg.get("mark", {}).get("name")
+
+                        if mark_name == "end_call":
+                            print("[CALL] Goodbye audio finished. Ending call.", flush=True)
+
+                            await oai_ws.close()
+                            await twilio_ws.close()
+                            break
                     elif event == "stop":
                         break
 
@@ -73,10 +82,15 @@ class RealtimeTwilioBridge:
                     # Let the caller interrupt the assistant.
                     elif et == "input_audio_buffer.speech_started" and stream_sid:
                         await twilio_ws.send_json({"event": "clear", "streamSid": stream_sid})
-
                     elif et == "response.done":
-                        await self._handle_tool_calls(oai_ws, event)
+                        end_call_requested = await self._handle_tool_calls(oai_ws, event)
 
+                        if end_call_requested and stream_sid:
+                            await twilio_ws.send_json({
+                                "event": "mark",
+                                "streamSid": stream_sid,
+                                "mark": {"name": "end_call"},
+                            })
                     elif et == "error":
                         print("OpenAI Realtime error:", event)
 
@@ -93,11 +107,22 @@ class RealtimeTwilioBridge:
                 "audio": {
                     "input": {
                         "format": {"type": "audio/pcmu"},
-                        "turn_detection": {"type": "server_vad"},
+
+                        "noise_reduction": {
+                            "type": "far_field"
+                        },
+
+                        "turn_detection": {
+                            "type": "semantic_vad",
+                            "eagerness": "high",
+                            "create_response": True,
+                            "interrupt_response": True,
+                        },
                     },
                     "output": {
                         "format": {"type": "audio/pcmu"},
                         "voice": "marin",
+                        "speed": 1.0,
                     },
                 },
             },
@@ -114,19 +139,31 @@ class RealtimeTwilioBridge:
     async def _handle_tool_calls(self, ws, response_done_event):
         response = response_done_event.get("response", {})
         outputs = response.get("output", [])
+
         made_call = False
+        end_call_requested = False
 
         for item in outputs:
             if item.get("type") != "function_call":
                 continue
+
             made_call = True
+
             call_id = item["call_id"]
             name = item["name"]
             args = json.loads(item.get("arguments") or "{}")
+
             try:
-                result = execute_tool(self.scheduler, name, args)
+                result = execute_tool(
+                    self.scheduler,
+                    name,
+                    args,
+                )
             except Exception as exc:
                 result = {"error": str(exc)}
+
+            if result.get("end_call"):
+                end_call_requested = True
 
             await ws.send(json.dumps({
                 "type": "conversation.item.create",
@@ -137,5 +174,9 @@ class RealtimeTwilioBridge:
                 },
             }))
 
-        if made_call:
-            await ws.send(json.dumps({"type": "response.create"}))
+        if made_call and not end_call_requested:
+            await ws.send(json.dumps({
+                "type": "response.create"
+            }))
+
+        return end_call_requested
