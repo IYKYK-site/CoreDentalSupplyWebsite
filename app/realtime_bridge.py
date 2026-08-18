@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+from twilio.rest import Client
+
 import asyncio
 import base64
 import json
@@ -8,6 +11,7 @@ import ssl
 import certifi
 
 from .tools import tool_definitions, execute_tool
+from .sms_service import send_sms
 
 
 class RealtimeTwilioBridge:
@@ -23,6 +27,13 @@ class RealtimeTwilioBridge:
         self.scheduler = scheduler
         self.model = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2")
         self.api_key = os.environ["OPENAI_API_KEY"]
+        self.caller_number = None
+        self.call_sid = None
+
+        self.twilio_client = Client(
+            os.environ["TWILIO_ACCOUNT_SID"],
+            os.environ["TWILIO_AUTH_TOKEN"],
+        )
 
     async def run(self, twilio_ws):
         url = f"wss://api.openai.com/v1/realtime?model={self.model}"
@@ -47,6 +58,16 @@ class RealtimeTwilioBridge:
                     event = msg.get("event")
                     if event == "start":
                         stream_sid = msg["start"]["streamSid"]
+                        self.call_sid = msg["start"].get("callSid")
+
+                        custom_parameters = msg["start"].get("customParameters", {})
+                        self.caller_number = custom_parameters.get("caller_number")
+                       
+
+                        print(
+                            f"[CALL] SMS destination number: {self.caller_number}",
+                            flush=True,
+                        )
                     elif event == "media":
                         await oai_ws.send(json.dumps({
                             "type": "input_audio_buffer.append",
@@ -56,13 +77,28 @@ class RealtimeTwilioBridge:
                         mark_name = msg.get("mark", {}).get("name")
 
                         if mark_name == "end_call":
-                            print("[CALL] Goodbye audio finished. Ending call.", flush=True)
+                            print(
+                                "[CALL] Goodbye audio finished. Closing media stream.",
+                                flush=True,
+                            )
 
                             await oai_ws.close()
                             await twilio_ws.close()
                             break
-                    elif event == "stop":
-                        break
+                        elif event == "stop":
+                            print(
+                                f"[CALL END] Twilio sent STOP event. "
+                                f"call_sid={self.call_sid} "
+                                f"stream_sid={stream_sid}",
+                                flush=True,
+                            )
+                            break
+
+                print(
+                    f"[CALL END] Twilio media receive loop exited. "
+                    f"call_sid={self.call_sid}",
+                    flush=True,
+                )
 
             async def openai_to_twilio():
                 nonlocal stream_sid
@@ -85,16 +121,51 @@ class RealtimeTwilioBridge:
                     elif et == "response.done":
                         end_call_requested = await self._handle_tool_calls(oai_ws, event)
 
-                        if end_call_requested and stream_sid:
+                        response = event.get("response", {})
+                        assistant_text = ""
+
+                        for item in response.get("output", []):
+                            if item.get("type") != "message":
+                                continue
+
+                            for content in item.get("content", []):
+                                transcript = content.get("transcript", "")
+                                if transcript:
+                                    assistant_text += " " + transcript
+
+                        assistant_text = assistant_text.strip().lower()
+
+                        farewell_detected = "goodbye" in assistant_text
+
+                        print(
+                            f"[CALL] response.done: "
+                            f"end_call_requested={end_call_requested}, "
+                            f"farewell_detected={farewell_detected}",
+                            flush=True,
+                        )
+
+                        if (end_call_requested or farewell_detected) and stream_sid:
                             await twilio_ws.send_json({
                                 "event": "mark",
                                 "streamSid": stream_sid,
                                 "mark": {"name": "end_call"},
                             })
+                            end_call_requested = await self._handle_tool_calls(oai_ws, event)
+                         
                     elif et == "error":
                         print("OpenAI Realtime error:", event)
+                print(
+                    f"[CALL END] OpenAI Realtime receive loop exited. "
+                    f"call_sid={self.call_sid}",
+                    flush=True,
+                )
 
             await asyncio.gather(twilio_to_openai(), openai_to_twilio())
+            print(
+                f"[CALL END] Twilio/OpenAI bridge fully closed. "
+                f"call_sid={self.call_sid}",
+                flush=True,
+            )
 
     async def _configure(self, ws):
         await ws.send(json.dumps({
@@ -154,11 +225,25 @@ class RealtimeTwilioBridge:
             args = json.loads(item.get("arguments") or "{}")
 
             try:
-                result = execute_tool(
-                    self.scheduler,
-                    name,
-                    args,
-                )
+                if name == "send_sms":
+                    if not self.caller_number:
+                        raise RuntimeError(
+                            "Caller phone number is unavailable for SMS."
+                        )
+
+                    result = send_sms(
+                        phone_number=self.caller_number,
+                        message_name=args["message_name"],
+                        variables=args.get("variables"),
+                    )
+
+                else:
+                    result = execute_tool(
+                        self.scheduler,
+                        name,
+                        args,
+                    )
+
             except Exception as exc:
                 result = {"error": str(exc)}
 
@@ -175,8 +260,11 @@ class RealtimeTwilioBridge:
             }))
 
         if made_call and not end_call_requested:
-            await ws.send(json.dumps({
-                "type": "response.create"
-            }))
+            response_status = response.get("status")
+
+            if response_status == "completed":
+                await ws.send(json.dumps({
+                    "type": "response.create"
+                }))
 
         return end_call_requested

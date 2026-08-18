@@ -3,6 +3,7 @@ import json
 from .config import OfficeConfig
 from .scheduling.base import Scheduler
 from .devlog import devlog
+from .sms_service import send_sms
 
 
 def tool_definitions():
@@ -61,20 +62,6 @@ def tool_definitions():
                 ],
             },
         },
-        
-        {
-            "type": "function",
-            "name": "end_call",
-            "description": (
-                "End the phone call only after the caller clearly indicates "
-                "they are finished and you have already said a brief goodbye."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
         {
             "type": "function",
             "name": "reschedule_appointment",
@@ -96,6 +83,36 @@ def tool_definitions():
                 "type": "object",
                 "properties": {"appointment_id": {"type": "string"}},
                 "required": ["appointment_id"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "send_sms",
+            "description": (
+                "Send an approved informational SMS to the caller only after "
+                "the caller has explicitly agreed to receive it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_name": {
+                        "type": "string",
+                        "enum": [
+                            "address",
+                            "doctor_bio",
+                            "insurance",
+                            "patient_forms",
+                            "urgent_contact",
+                            "appointment_confirmation",
+                        ],
+                    },
+                    "variables": {
+                        "type": "object"
+                    },
+                },
+                "required": [
+                    "message_name",
+                ],
             },
         },
             {
@@ -231,10 +248,13 @@ def execute_tool(scheduler: Scheduler, name: str, args: dict) -> dict:
                 "end": slot.end.isoformat(),
             }
         }
-        if name == "end_call":
-            devlog("CALL", "End call requested by Claudia.")
-            return {"end_call": True}
 
+        if name == "send_sms":
+            return send_sms(
+                phone_number=args["phone_number"],
+                message_name=args["message_name"],
+                variables=args.get("variables"),
+            )
     raise ValueError(f"Unknown tool: {name}")
 
 

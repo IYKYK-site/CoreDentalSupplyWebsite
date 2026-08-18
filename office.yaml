@@ -97,7 +97,13 @@ fallback:
 
 knowledge:
   services: []
-  insurance: ""
+  insurance:
+    accepted_plans:
+      - "Cigna"
+      - "BlueCross/BlueShield"
+      - "Aetna"
+      - "UnitedHealthcare"
+      - "Leon Medical"
   parking: ""
   new_patient_instructions: ""
   office_policies: ""
@@ -111,3 +117,84 @@ appointment_types:
   default:
     duration_minutes: 60
     buffer_minutes: 0
+
+sms:
+  enabled: true
+
+  messages:
+
+    address:
+      enabled: true
+      offer_after_response: true
+      message: |
+        Dr. Novoa's Office
+        10551 NW 52nd Terrace
+        Doral, FL 33178
+
+        Directions:
+        https://maps.google.com/?q=10551+NW+52nd+Terrace+Doral+FL+33178
+
+        Reply STOP to opt out.
+
+    doctor_bio:
+      enabled: true
+      offer_after_response: true
+      message: |
+        Learn more about Dr. Novoa:
+
+        {{bio_url}}
+
+        Reply STOP to opt out.
+
+    insurance:
+      enabled: true
+      offer_after_response: true
+      message: |
+        Insurance information:
+
+        {{insurance_url}}
+
+        Reply STOP to opt out.
+
+    patient_forms:
+      enabled: true
+      offer_after_response: true
+      message: |
+        Patient Forms
+
+        Please complete your paperwork before arriving:
+
+        {{forms_url}}
+
+        Reply STOP to opt out.
+
+    urgent_contact:
+      enabled: true
+      offer_after_response: false
+      message: |
+        Urgent Dental Contact
+
+        Please call the office immediately:
+
+        {{office_phone}}
+
+        If this becomes a medical emergency, call 911.
+
+        Reply STOP to opt out.
+
+    appointment_confirmation:
+      enabled: true
+      offer_after_response: true
+      message: |
+        Appointment Confirmation
+
+        Patient: {{patient_name}}
+        Doctor: {{doctor}}
+        Date: {{date}}
+        Time: {{time}}
+        Reason: {{reason}}
+
+        Location:
+        {{office_address}}
+
+        Reply STOP to opt out.

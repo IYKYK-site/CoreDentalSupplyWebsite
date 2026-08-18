@@ -73,7 +73,11 @@ async def incoming_call(request: Request):
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="{ws_url}" />
+    <Stream url="{ws_url}">
+
+      <Parameter name="caller_number" value="{caller_number}" />
+
+    </Stream>
   </Connect>
   <Hangup/>
 </Response>"""
@@ -84,9 +88,13 @@ async def incoming_call(request: Request):
 async def media_stream(ws: WebSocket):
     await ws.accept()
     bridge = RealtimeTwilioBridge(config, scheduler())
+
     try:
         await bridge.run(ws)
+
     finally:
+        print("[CALL END] Twilio media stream ended")
+
         try:
             await ws.close()
         except Exception:
