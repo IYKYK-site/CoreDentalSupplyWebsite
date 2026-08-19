@@ -1,6 +1,7 @@
 from __future__ import annotations
+import logging
 import os
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, WebSocket, Request, WebSocketDisconnect
 from fastapi.responses import Response
 from dotenv import load_dotenv
 from .devlog import devlog
@@ -9,6 +10,8 @@ from .config import load_config
 from .scheduling.google_calendar import GoogleCalendarScheduler
 from .scheduling.mock import MockScheduler
 from .realtime_bridge import RealtimeTwilioBridge
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 config = load_config()
@@ -91,11 +94,17 @@ async def media_stream(ws: WebSocket):
 
     try:
         await bridge.run(ws)
-
+    except WebSocketDisconnect:
+        # Normal caller/network disconnect; bridge.run owns peer cleanup.
+        pass
+    except Exception:
+        logger.exception(
+            "Unexpected media bridge failure call_sid=%s",
+            bridge.call_sid or "unknown",
+        )
+        raise
     finally:
-        print("[CALL END] Twilio media stream ended")
-
         try:
             await ws.close()
-        except Exception:
+        except (RuntimeError, WebSocketDisconnect):
             pass
