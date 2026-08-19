@@ -17,6 +17,25 @@ class MockScheduler(Scheduler):
         start = datetime.combine(d, time(9, 0), self.tz)
         return [Slot(start + timedelta(hours=i), start + timedelta(hours=i+1)) for i in range(7)]
 
+    def find_first_available_time(
+        self,
+        provider_id=None,
+        duration_minutes=None,
+        buffer_minutes=None,
+        days_to_search=30,
+    ):
+        not_before = datetime.now(self.tz) + timedelta(hours=1)
+
+        for day_offset in range(days_to_search + 1):
+            search_date = not_before.date() + timedelta(days=day_offset)
+            for slot in self.get_available_slots(
+                search_date.isoformat(), provider_id
+            ):
+                if slot.start >= not_before:
+                    return slot
+
+        return None
+
     def create_appointment(self, patient_name, patient_phone, provider_id, start_iso, duration_minutes=None, reason=""):
         start = datetime.fromisoformat(start_iso)
         if start.tzinfo is None:

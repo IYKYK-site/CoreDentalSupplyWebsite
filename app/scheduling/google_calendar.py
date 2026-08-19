@@ -49,6 +49,9 @@ class GoogleCalendarScheduler(Scheduler):
         day_start = datetime(d.year, d.month, d.day, tzinfo=self.tz)
         return day_start, day_start + timedelta(days=1)
 
+    def _now(self):
+        return datetime.now(self.tz)
+
     def _office_window(self, date: str):
         d = datetime.fromisoformat(date).date()
         day_name = d.strftime("%A").lower()
@@ -74,7 +77,7 @@ class GoogleCalendarScheduler(Scheduler):
         if not window:
             return []
 
-        now = datetime.now(self.tz)
+        now = self._now()
         requested_date = datetime.fromisoformat(date).date()
         is_today = requested_date == now.date()
 
@@ -149,7 +152,7 @@ class GoogleCalendarScheduler(Scheduler):
         slots = []
         cur = open_dt
 
-        while cur + duration <= close_dt:
+        while cur + duration + buffer <= close_dt:
             if is_today and cur <= now:
                 cur += step
                 continue
@@ -169,6 +172,34 @@ class GoogleCalendarScheduler(Scheduler):
             cur += step
 
         return slots
+
+    def find_first_available_time(
+        self,
+        provider_id: str | None = None,
+        duration_minutes: int | None = None,
+        buffer_minutes: int | None = None,
+        days_to_search: int = 30,
+    ):
+        """Return the earliest live-calendar slot at least one hour from now."""
+
+        now = self._now()
+        not_before = now + timedelta(hours=1)
+
+        for day_offset in range(days_to_search + 1):
+            search_date = now.date() + timedelta(days=day_offset)
+            slots = self.get_available_slots(
+                date=search_date.isoformat(),
+                provider_id=provider_id,
+                duration_minutes=duration_minutes,
+                buffer_minutes=buffer_minutes,
+            )
+
+            for slot in slots:
+                if slot.start >= not_before:
+                    return slot
+
+        return None
+
     def find_next_available_time(
         self,
         preferred_time: str,
@@ -183,7 +214,7 @@ class GoogleCalendarScheduler(Scheduler):
         preferred_time must be HH:MM, for example "15:00".
         """
 
-        now = datetime.now(self.tz)
+        now = self._now()
 
         preferred_hour, preferred_minute = map(
             int,

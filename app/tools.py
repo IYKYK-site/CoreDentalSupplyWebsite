@@ -147,7 +147,34 @@ def tool_definitions():
                     "preferred_time"
                 ]
             }
-        }, 
+        },
+        {
+            "type": "function",
+            "name": "find_first_available_time",
+            "description": (
+                "Find the earliest appointment available on the live calendar, "
+                "starting one hour after the current office-local time. Use for "
+                "urgent, immediate, earliest, or first-available requests."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "provider_id": {
+                        "type": "string"
+                    },
+                    "duration_minutes": {
+                        "type": "integer"
+                    },
+                    "buffer_minutes": {
+                        "type": "integer"
+                    },
+                    "days_to_search": {
+                        "type": "integer",
+                        "description": "How many future days to search. Default is 30."
+                    }
+                }
+            }
+        },
     ]
 
 
@@ -239,6 +266,28 @@ def execute_tool(scheduler: Scheduler, name: str, args: dict) -> dict:
             return {
                 "found": False,
                 "message": "No matching appointment time was found in the search window."
+            }
+
+        return {
+            "found": True,
+            "slot": {
+                "start": slot.start.isoformat(),
+                "end": slot.end.isoformat(),
+            }
+        }
+
+    if name == "find_first_available_time":
+        slot = scheduler.find_first_available_time(
+            provider_id=args.get("provider_id"),
+            duration_minutes=args.get("duration_minutes"),
+            buffer_minutes=args.get("buffer_minutes"),
+            days_to_search=args.get("days_to_search", 30),
+        )
+
+        if slot is None:
+            return {
+                "found": False,
+                "message": "No available appointment was found in the search window."
             }
 
         return {
