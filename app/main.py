@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import asynccontextmanager
 import logging
 import os
 from fastapi import FastAPI, WebSocket, Request, WebSocketDisconnect
@@ -6,7 +7,7 @@ from fastapi.responses import Response
 from dotenv import load_dotenv
 from .devlog import devlog
 
-from .config import load_config
+from .config import load_config, validate_environment
 from .scheduling.google_calendar import GoogleCalendarScheduler
 from .scheduling.mock import MockScheduler
 from .realtime_bridge import RealtimeTwilioBridge
@@ -16,7 +17,17 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 config = load_config()
 
-app = FastAPI(title="Core AI Receptionist POC")
+def validate_startup_environment():
+    validate_environment(config)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    validate_startup_environment()
+    yield
+
+
+app = FastAPI(title="Core AI Receptionist POC", lifespan=lifespan)
 
 
 def build_scheduler():

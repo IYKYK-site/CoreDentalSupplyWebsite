@@ -3,11 +3,10 @@ SMS_TEMPLATES = {
     "address": """
 Core Dental Supply
 
-10551 NW 52nd Terrace
-Doral, FL 33178
+9280 SW 72nd St, Ste 101, Miami, FL 33173
 
 Directions:
-https://maps.google.com/?q=10551+NW+52nd+Terrace+Doral+FL+33178
+https://maps.google.com/?q=9280+SW+72nd+St+Ste+101+Miami+FL+33173
 """,
 
     "doctor_bio": """
@@ -39,7 +38,7 @@ Urgent Dental Contact
 
 Please call the office immediately:
 
-(305) XXX-XXXX
+305-773-3604
 
 If this becomes a medical emergency, call 911.
 """

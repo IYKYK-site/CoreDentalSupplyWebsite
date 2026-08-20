@@ -20,6 +20,7 @@ class Appointment:
     end: datetime
     status: str = "confirmed"
     service: str = ""
+    patient_dob: str = ""
 
 
 class Scheduler(ABC):
@@ -29,13 +30,24 @@ class Scheduler(ABC):
 
     @abstractmethod
     def create_appointment(
-        self, patient_name: str, patient_phone: str, provider_id: str,
-        start_iso: str, duration_minutes: int | None = None, reason: str = ""
+        self,
+        patient_name: str,
+        patient_phone: str,
+        patient_dob: str,
+        provider_id: str,
+        start_iso: str,
+        duration_minutes: int | None = None,
+        reason: str = "",
     ) -> Appointment:
         raise NotImplementedError
 
     @abstractmethod
-    def find_appointments(self, patient_name: str = "", patient_phone: str = "") -> list[Appointment]:
+    def find_appointments(
+        self,
+        patient_name: str = "",
+        patient_phone: str = "",
+        patient_dob: str = "",
+    ) -> list[Appointment]:
         raise NotImplementedError
 
     @abstractmethod

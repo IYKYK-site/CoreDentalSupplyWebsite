@@ -107,6 +107,10 @@ class KnowledgeConfig(BaseModel):
     additional_facts: list[str] = Field(default_factory=list)
 
 
+class SmsConfig(BaseModel):
+    enabled: bool = False
+
+
 class OfficeConfig(BaseModel):
     office: OfficeInfo
     receptionist: Receptionist
@@ -119,6 +123,7 @@ class OfficeConfig(BaseModel):
     procedures: list[dict] = Field(default_factory=list)
     fallback: Fallback
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    sms: SmsConfig = Field(default_factory=SmsConfig)
 
 
     def system_prompt(self) -> str:
@@ -126,9 +131,11 @@ class OfficeConfig(BaseModel):
             f"- {p.name} ({p.specialty}); services: {', '.join(p.services) or 'not yet specified'}"
             for p in self.providers
         )
+        caller_facing_office = self.office.model_dump()
+        caller_facing_office["phone"] = self.fallback.phone
         facts = yaml.safe_dump(
             {
-                "office": self.office.model_dump(),
+                "office": caller_facing_office,
                 "office_hours": self.office_hours,
                 "providers": [p.model_dump() for p in self.providers],
                 "procedures": self.procedures,
@@ -189,6 +196,7 @@ SPRINT-0 SCOPE:
 
 CORE RULES:
 - Never invent office facts, services, prices, insurance coverage, provider availability, policies, or scheduling information.
+- For every caller-facing phone, transfer, help, fallback, or office-contact response, use only {self.fallback.phone}.
 - If the answer is not in OFFICE DATA, say you do not have that information and direct the caller to {self.fallback.phone}.
 - Use the scheduling tools for calendar facts. Never claim a time is available until the scheduling tool confirms it.
 - Before creating, moving, or cancelling an appointment, confirm the important details with the caller.
@@ -421,3 +429,34 @@ def load_config(path: str | None = None) -> OfficeConfig:
     path = path or os.getenv("OFFICE_CONFIG", "office.yaml")
     raw = yaml.safe_load(Path(path).read_text())
     return OfficeConfig.model_validate(raw)
+
+
+def validate_environment(
+    office_config: OfficeConfig,
+    environ: dict[str, str] | None = None,
+) -> None:
+    environ = os.environ if environ is None else environ
+    required = (
+        "OPENAI_API_KEY",
+        "PUBLIC_URL",
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN",
+    )
+    missing = [name for name in required if not environ.get(name, "").strip()]
+
+    if office_config.sms.enabled and not any(
+        environ.get(name, "").strip()
+        for name in (
+            "TWILIO_MESSAGING_SERVICE_SID",
+            "TWILIO_PHONE_NUMBER",
+        )
+    ):
+        missing.append(
+            "TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER"
+        )
+
+    if missing:
+        raise RuntimeError(
+            "Missing required environment configuration: "
+            + ", ".join(missing)
+        )

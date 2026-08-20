@@ -471,4 +471,5 @@ class GoogleCalendarScheduler(Scheduler):
             end=end,
             status=event.get("status", "confirmed"),
             service=service,
+            patient_dob=props.get("patient_dob", ""),
         )

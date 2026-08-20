@@ -230,11 +230,11 @@ def execute_tool(
         devlog("CALENDAR", "Creating appointment...")
 
         a = scheduler.create_appointment(
-            patient_name,
-            patient_phone,
-            patient_dob,
-            provider_id,
-            start_iso,
+            patient_name=patient_name,
+            patient_phone=patient_phone,
+            patient_dob=patient_dob,
+            provider_id=provider_id,
+            start_iso=start_iso,
             reason=args.get("reason", "")
         )
 
@@ -297,6 +297,14 @@ def execute_tool(
         devlog("CALENDAR", "Appointment cancelled.")
 
         return {"cancelled": result}
+
+    if name == "send_sms":
+        return send_sms(
+            phone_number=args["phone_number"],
+            message_name=args["message_name"],
+            variables=args.get("variables"),
+        )
+
     if name == "find_next_available_time":
         slot = scheduler.find_next_available_time(
             preferred_time=args["preferred_time"],
@@ -342,12 +350,6 @@ def execute_tool(
             }
         }
 
-        if name == "send_sms":
-            return send_sms(
-                phone_number=args["phone_number"],
-                message_name=args["message_name"],
-                variables=args.get("variables"),
-            )
     raise ValueError(f"Unknown tool: {name}")
 
 

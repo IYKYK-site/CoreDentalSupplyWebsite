@@ -29,6 +29,18 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+Configure these required values in `.env` before starting the service:
+
+- `OPENAI_API_KEY`
+- `PUBLIC_URL`
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+
+SMS is enabled in `office.yaml`, so also configure either
+`TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_PHONE_NUMBER`. The service validates
+this environment at startup and reports missing variable names without
+printing their values.
+
 Put your Google OAuth Desktop App credentials in `client_secret.json`, then run:
 
 ```bash

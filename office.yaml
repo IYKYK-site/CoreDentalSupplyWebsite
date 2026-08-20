@@ -1,5 +1,6 @@
 office:
   name: "Novoa Dental"
+  # Internal metadata only. Caller-facing contact uses fallback.phone below.
   phone: "(305) 552-8033"
   address: "9280 SW 72nd St, Ste 101, Miami, FL 33173"
   website: ""
@@ -113,6 +114,7 @@ late_arrival:
         appointment time.
 
 fallback:
+  # POC-only test contact. Keep caller-facing transfers away from the real office.
   phone: "305-773-3604"
   enabled: true
 
@@ -149,11 +151,10 @@ sms:
       offer_after_response: true
       message: |
         Dr. Novoa's Office
-        10551 NW 52nd Terrace
-        Doral, FL 33178
+        9280 SW 72nd St, Ste 101, Miami, FL 33173
 
         Directions:
-        https://maps.google.com/?q=10551+NW+52nd+Terrace+Doral+FL+33178
+        https://maps.google.com/?q=9280+SW+72nd+St+Ste+101+Miami+FL+33173
 
         Reply STOP to opt out.
 
@@ -197,7 +198,7 @@ sms:
 
         Please call the office immediately:
 
-        {{office_phone}}
+        305-773-3604
 
         If this becomes a medical emergency, call 911.
 

@@ -36,20 +36,44 @@ class MockScheduler(Scheduler):
 
         return None
 
-    def create_appointment(self, patient_name, patient_phone, provider_id, start_iso, duration_minutes=None, reason=""):
+    def create_appointment(
+        self,
+        patient_name,
+        patient_phone,
+        patient_dob,
+        provider_id,
+        start_iso,
+        duration_minutes=None,
+        reason="",
+    ):
         start = datetime.fromisoformat(start_iso)
         if start.tzinfo is None:
             start = start.replace(tzinfo=self.tz)
         end = start + timedelta(minutes=duration_minutes or self.duration)
-        appt = Appointment(str(uuid4()), patient_name, patient_phone, provider_id, start, end)
+        appt = Appointment(
+            str(uuid4()),
+            patient_name,
+            patient_phone,
+            provider_id,
+            start,
+            end,
+            service=reason,
+            patient_dob=patient_dob,
+        )
         self.items[appt.id] = appt
         return appt
 
-    def find_appointments(self, patient_name="", patient_phone=""):
+    def find_appointments(
+        self,
+        patient_name="",
+        patient_phone="",
+        patient_dob="",
+    ):
         return [
             a for a in self.items.values()
             if (not patient_name or patient_name.lower() in a.patient_name.lower())
             and (not patient_phone or patient_phone == a.patient_phone)
+            and (not patient_dob or patient_dob == a.patient_dob)
             and a.status != "cancelled"
         ]
 
@@ -65,6 +89,7 @@ class MockScheduler(Scheduler):
             for appointment in self.find_appointments(
                 patient_name=patient_name,
                 patient_phone=patient_phone,
+                patient_dob=patient_dob,
             )
             if appointment.start.astimezone(self.tz).date() == today
         ]
