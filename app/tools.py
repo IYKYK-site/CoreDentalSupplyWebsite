@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 from .config import OfficeConfig
+from .late_arrival import check_late_arrival_status
 from .scheduling.base import Scheduler
 from .devlog import devlog
 from .sms_service import send_sms
@@ -60,6 +61,33 @@ def tool_definitions():
                     "patient_phone",
                     "patient_dob",
                 ],
+            },
+        },
+        {
+            "type": "function",
+            "name": "check_late_arrival_status",
+            "description": (
+                "Look up today's appointment and apply the configured late-arrival "
+                "policy. Use whenever a caller reports being late or asks whether "
+                "they can still come. Caller ID is supplied by the server when "
+                "available."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "patient_phone": {
+                        "type": "string",
+                        "description": "Caller phone number when caller ID is unavailable."
+                    },
+                    "patient_name": {
+                        "type": "string",
+                        "description": "Full name, requested only when identity clarification is needed."
+                    },
+                    "patient_dob": {
+                        "type": "string",
+                        "description": "Date of birth in MM/DD/YYYY, requested only when identity clarification is needed."
+                    },
+                },
             },
         },
         {
@@ -178,7 +206,12 @@ def tool_definitions():
     ]
 
 
-def execute_tool(scheduler: Scheduler, name: str, args: dict) -> dict:
+def execute_tool(
+    scheduler: Scheduler,
+    name: str,
+    args: dict,
+    config: OfficeConfig | None = None,
+) -> dict:
     if name == "get_available_slots":
         slots = scheduler.get_available_slots(args["date"], args.get("provider_id"))
         return {"slots": [{"start": s.start.isoformat(), "end": s.end.isoformat()} for s in slots[:8]]}
@@ -220,6 +253,17 @@ def execute_tool(scheduler: Scheduler, name: str, args: dict) -> dict:
             patient_dob=args.get("patient_dob", ""),
         )
         return {"appointments": [appointment_dict(a) for a in items]}
+
+    if name == "check_late_arrival_status":
+        if config is None:
+            raise RuntimeError("Office configuration is required for late arrivals")
+        return check_late_arrival_status(
+            config,
+            scheduler,
+            patient_phone=args.get("patient_phone", ""),
+            patient_name=args.get("patient_name", ""),
+            patient_dob=args.get("patient_dob", ""),
+        )
 
     if name == "reschedule_appointment":
         devlog(

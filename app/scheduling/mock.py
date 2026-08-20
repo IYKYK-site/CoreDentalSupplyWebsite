@@ -53,6 +53,22 @@ class MockScheduler(Scheduler):
             and a.status != "cancelled"
         ]
 
+    def find_today_appointments(
+        self,
+        patient_phone="",
+        patient_name="",
+        patient_dob="",
+    ):
+        today = datetime.now(self.tz).date()
+        return [
+            appointment
+            for appointment in self.find_appointments(
+                patient_name=patient_name,
+                patient_phone=patient_phone,
+            )
+            if appointment.start.astimezone(self.tz).date() == today
+        ]
+
     def reschedule_appointment(self, appointment_id, new_start_iso):
         appt = self.items[appointment_id]
         duration = appt.end - appt.start

@@ -1,12 +1,13 @@
 from __future__ import annotations
 from pathlib import Path
 import os
+from typing import Literal
 from dotenv import load_dotenv
 
 load_dotenv()
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class OfficeInfo(BaseModel):
@@ -37,6 +38,57 @@ class AppointmentsConfig(BaseModel):
     default_buffer_minutes: int = 0
 
 
+class LateArrivalBehavior(BaseModel):
+    action: Literal["still_come", "transfer", "reschedule"]
+    message: str
+
+
+class LateArrivalBehaviors(BaseModel):
+    within_grace: LateArrivalBehavior = Field(default_factory=lambda: LateArrivalBehavior(
+        action="still_come",
+        message=(
+            "You are within the office's normal grace period and may still "
+            "come to your appointment."
+        ),
+    ))
+    escalation: LateArrivalBehavior = Field(default_factory=lambda: LateArrivalBehavior(
+        action="transfer",
+        message=(
+            "You are beyond the normal grace period. I cannot confirm that "
+            "the office can still accommodate the appointment, so I need "
+            "to connect you with office staff."
+        ),
+    ))
+    reschedule: LateArrivalBehavior = Field(default_factory=lambda: LateArrivalBehavior(
+        action="reschedule",
+        message=(
+            "Based on the office's late-arrival policy, we should look for "
+            "another appointment time."
+        ),
+    ))
+
+
+class LateArrivalPolicy(BaseModel):
+    grace_period_minutes: int = 10
+    escalation_threshold_minutes: int = 11
+    reschedule_threshold_minutes: int = 30
+    behaviors: LateArrivalBehaviors = Field(default_factory=LateArrivalBehaviors)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self):
+        if self.grace_period_minutes < 0:
+            raise ValueError("grace_period_minutes must be non-negative")
+        if self.escalation_threshold_minutes != self.grace_period_minutes + 1:
+            raise ValueError(
+                "escalation_threshold_minutes must immediately follow the grace period"
+            )
+        if self.reschedule_threshold_minutes <= self.escalation_threshold_minutes:
+            raise ValueError(
+                "reschedule_threshold_minutes must exceed the escalation threshold"
+            )
+        return self
+
+
 class Fallback(BaseModel):
     phone: str
     enabled: bool = True
@@ -61,6 +113,7 @@ class OfficeConfig(BaseModel):
     providers: list[Provider]
     office_hours: dict
     appointments: AppointmentsConfig
+    late_arrival: LateArrivalPolicy = Field(default_factory=LateArrivalPolicy)
     lunch: dict = Field(default_factory=dict)
     appointment_types: dict = Field(default_factory=dict)
     procedures: list[dict] = Field(default_factory=list)
@@ -80,6 +133,7 @@ class OfficeConfig(BaseModel):
                 "providers": [p.model_dump() for p in self.providers],
                 "procedures": self.procedures,
                 "knowledge": self.knowledge.model_dump(),
+                "late_arrival": self.late_arrival.model_dump(),
             },
             sort_keys=False,
         )
@@ -147,6 +201,21 @@ URGENT / FIRST-AVAILABLE SCHEDULING:
 - This search starts one hour after the current time in the office timezone and checks forward chronologically across configured office days and hours.
 - Offer only the slot returned by the live calendar search. Do not rely on remembered availability or previously returned busy times.
 - If the caller explicitly requests a specific time, continue using the preferred-time search instead.
+
+LATE ARRIVAL MANAGEMENT:
+- If a caller says they are late, running late, asks whether they can still come, or asks whether they need to reschedule, call check_late_arrival_status before answering.
+- Follow the returned action and patient-safe message. Never calculate lateness or interpret the policy yourself.
+- A unique match based only on the incoming caller ID permits you to communicate only the operational policy result: still come, speak with office staff, rescheduling is recommended, or the appointment has not started yet.
+- When identity_verified is false, never disclose appointment time, provider, service, date of birth, patient name, appointment ID, duration, or any other appointment-specific detail from the tool result.
+- Before revealing appointment-specific details or calling reschedule_appointment or cancel_appointment, complete the existing identity verification using full name and date of birth.
+- If match_status is ambiguous or not_found, ask for the minimum additional identity information required by the existing privacy rules, then retry the tool. Never guess.
+- Never promise that the office can accommodate a late patient unless recommended_action is still_come.
+- If rescheduling is recommended and identity_verified is false, collect the caller's full name and date of birth one item at a time, then call check_late_arrival_status again with both values.
+- Once full name and date of birth are supplied, they are authoritative for the appointment lookup. Caller ID is no longer a matching requirement.
+- If rescheduling is recommended, identity_verified is true, and can_search_replacement is true, do not transfer the caller merely because rescheduling was recommended. Call find_first_available_time with the returned provider_id and duration_minutes. It searches from one hour after the current office-local time, including the remaining availability today before later days.
+- Offer the replacement slot returned by find_first_available_time and wait for the caller's explicit confirmation.
+- Only after the caller confirms the replacement slot, call reschedule_appointment with the returned appointment_id and confirmed new start time.
+- Do not cancel or modify the current appointment while checking late-arrival status or searching for a replacement.
 
 INSURANCE:
 - Answer insurance questions only from knowledge.insurance.accepted_plans in OFFICE DATA.
@@ -242,14 +311,14 @@ LANGUAGE
 Many callers in South Florida naturally switch between English, Spanish, Haitian Creole, and Portuguese during the same conversation. Follow the caller's language naturally without calling attention to language changes.
 
 LOOKUPS AND PAUSES:
-- If you need a moment to check information or use a scheduling tool, briefly acknowledge the caller before the lookup.
-- Use a short natural phrase such as:
-  "Let me check that for you."
-  "One moment."
-  "Déjeme revisar."
-  "Un momentito."
-- Do not leave the caller in unexplained silence.
-- Do not overuse filler phrases.
+- Do not announce routine or quick operations. Call the needed function promptly.
+- If a live network lookup may take noticeable time, use at most one short, natural acknowledgement for that lookup.
+- Never repeat phrases such as "Let me check," "Let me verify," or "One moment" while waiting.
+- As soon as a result is available, continue speaking automatically without waiting for another caller utterance.
+
+CALLER-FACING LANGUAGE:
+- Never say internal implementation terms such as "workflow", "tool", "backend", "policy engine", "workflow_state", "recommended_action", or "replacement_search" to a caller.
+- Translate every internal result into ordinary receptionist language.
 
 UNCLEAR AUDIO
 - If the caller's speech is unclear, incomplete, or difficult to understand, never guess what they said.

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -251,3 +252,342 @@ def test_unexpected_openai_error_propagates_after_peer_cleanup(
         "CALL",
         "ended call_sid=CA123 reason=unexpected_error",
     )
+
+
+def test_late_arrival_tool_receives_twilio_caller_id(monkeypatch):
+    async def scenario():
+        captured = {}
+        bridge = object.__new__(RealtimeTwilioBridge)
+        bridge.caller_number = "+13055550123"
+        bridge.scheduler = object()
+        bridge.config = object()
+        ws = FakeOpenAIWebSocket()
+
+        def fake_execute_tool(scheduler, name, args, config=None):
+            captured.update({
+                "scheduler": scheduler,
+                "name": name,
+                "args": args,
+                "config": config,
+            })
+            return {"recommended_action": "transfer"}
+
+        monkeypatch.setattr(
+            realtime_bridge, "execute_tool", fake_execute_tool
+        )
+        await bridge._handle_tool_calls(ws, {
+            "response": {
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "check_late_arrival_status",
+                    "arguments": "{}",
+                }],
+            }
+        })
+
+        assert captured == {
+            "scheduler": bridge.scheduler,
+            "name": "check_late_arrival_status",
+            "args": {"patient_phone": "+13055550123"},
+            "config": bridge.config,
+        }
+
+    asyncio.run(scenario())
+
+
+def make_tool_call_bridge():
+    bridge = object.__new__(RealtimeTwilioBridge)
+    bridge.caller_number = "+13055550123"
+    bridge.scheduler = object()
+    bridge.config = object()
+    bridge._processed_tool_call_ids = set()
+    bridge._pending_response_call_ids = []
+    return bridge
+
+
+def function_call_event(status, calls):
+    return {
+        "response": {
+            "status": status,
+            "output": [
+                {
+                    "type": "function_call",
+                    "call_id": f"call-{index}",
+                    "name": name,
+                    "arguments": "{}",
+                }
+                for index, name in enumerate(calls, start=1)
+            ],
+        }
+    }
+
+
+@pytest.mark.parametrize("status", ["completed", "incomplete"])
+def test_tool_output_always_triggers_one_continuation(
+    monkeypatch, status
+):
+    async def scenario():
+        bridge = make_tool_call_bridge()
+        ws = FakeOpenAIWebSocket()
+        executions = []
+
+        def fake_execute_tool(scheduler, name, args, config=None):
+            executions.append(name)
+            return {"ok": True}
+
+        monkeypatch.setattr(
+            realtime_bridge, "execute_tool", fake_execute_tool
+        )
+        await bridge._handle_tool_calls(
+            ws, function_call_event(status, ["get_available_slots"])
+        )
+
+        assert executions == ["get_available_slots"]
+        assert [message["type"] for message in ws.sent] == [
+            "conversation.item.create",
+            "response.create",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_multiple_tool_outputs_trigger_only_one_continuation(monkeypatch):
+    async def scenario():
+        bridge = make_tool_call_bridge()
+        ws = FakeOpenAIWebSocket()
+        executions = []
+
+        def fake_execute_tool(scheduler, name, args, config=None):
+            executions.append(name)
+            return {"ok": True}
+
+        monkeypatch.setattr(
+            realtime_bridge, "execute_tool", fake_execute_tool
+        )
+        await bridge._handle_tool_calls(
+            ws,
+            function_call_event(
+                "completed",
+                ["get_available_slots", "find_first_available_time"],
+            ),
+        )
+
+        assert executions == [
+            "get_available_slots",
+            "find_first_available_time",
+        ]
+        assert [message["type"] for message in ws.sent].count(
+            "conversation.item.create"
+        ) == 2
+        assert [message["type"] for message in ws.sent].count(
+            "response.create"
+        ) == 1
+
+    asyncio.run(scenario())
+
+
+def test_end_call_tool_suppresses_continuation(monkeypatch):
+    async def scenario():
+        bridge = make_tool_call_bridge()
+        ws = FakeOpenAIWebSocket()
+        executions = []
+
+        def fake_execute_tool(scheduler, name, args, config=None):
+            executions.append(name)
+            return {"end_call": True}
+
+        monkeypatch.setattr(
+            realtime_bridge, "execute_tool", fake_execute_tool
+        )
+        end_call_requested = await bridge._handle_tool_calls(
+            ws, function_call_event("completed", ["end_call"])
+        )
+
+        assert executions == ["end_call"]
+        assert end_call_requested is True
+        assert [message["type"] for message in ws.sent] == [
+            "conversation.item.create"
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_identical_call_id_executes_only_once(monkeypatch):
+    async def scenario():
+        bridge = make_tool_call_bridge()
+        ws = FakeOpenAIWebSocket()
+        executions = []
+
+        def fake_execute_tool(scheduler, name, args, config=None):
+            executions.append(name)
+            return {"ok": True}
+
+        monkeypatch.setattr(
+            realtime_bridge, "execute_tool", fake_execute_tool
+        )
+        event = function_call_event("completed", ["reschedule_appointment"])
+        await bridge._handle_tool_calls(ws, event)
+        await bridge._handle_tool_calls(ws, event)
+
+        assert executions == ["reschedule_appointment"]
+        assert [message["type"] for message in ws.sent].count(
+            "conversation.item.create"
+        ) == 1
+        assert [message["type"] for message in ws.sent].count(
+            "response.create"
+        ) == 1
+
+    asyncio.run(scenario())
+
+
+def test_distinct_call_ids_execute_normally(monkeypatch):
+    async def scenario():
+        bridge = make_tool_call_bridge()
+        ws = FakeOpenAIWebSocket()
+        executions = []
+
+        def fake_execute_tool(scheduler, name, args, config=None):
+            executions.append(name)
+            return {"ok": True}
+
+        monkeypatch.setattr(
+            realtime_bridge, "execute_tool", fake_execute_tool
+        )
+        await bridge._handle_tool_calls(
+            ws, function_call_event("completed", ["get_available_slots"])
+        )
+        second = function_call_event("completed", ["get_available_slots"])
+        second["response"]["output"][0]["call_id"] = "call-distinct"
+        await bridge._handle_tool_calls(ws, second)
+
+        assert executions == ["get_available_slots", "get_available_slots"]
+
+    asyncio.run(scenario())
+
+
+def test_blocking_tool_does_not_block_event_loop_heartbeat(monkeypatch):
+    async def scenario():
+        bridge = make_tool_call_bridge()
+        ws = FakeOpenAIWebSocket()
+        ticks = 0
+
+        def slow_execute_tool(scheduler, name, args, config=None):
+            time.sleep(0.08)
+            return {"ok": True}
+
+        async def heartbeat(task):
+            nonlocal ticks
+            while not task.done():
+                ticks += 1
+                await asyncio.sleep(0.005)
+
+        monkeypatch.setattr(
+            realtime_bridge, "execute_tool", slow_execute_tool
+        )
+        tool_task = asyncio.create_task(
+            bridge._handle_tool_calls(
+                ws,
+                function_call_event("completed", ["get_available_slots"]),
+            )
+        )
+        await asyncio.gather(tool_task, heartbeat(tool_task))
+        assert ticks >= 5
+
+    asyncio.run(scenario())
+
+
+def test_tool_continuation_logging_and_openai_acknowledgement(monkeypatch):
+    lifecycle = []
+
+    async def scenario():
+        response_created = json.dumps({
+            "type": "response.created",
+            "response": {"id": "resp-123"},
+        })
+        openai_error = json.dumps({
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": "busy"},
+        })
+        oai_ws = FakeOpenAIWebSocket([response_created, openai_error])
+        twilio_ws = FakeTwilioWebSocket(
+            [start_event()], wait_for_mark=True
+        )
+        bridge = make_bridge(monkeypatch, oai_ws, lifecycle)
+        bridge._pending_response_call_ids = ["call-7"]
+
+        with pytest.raises(RuntimeError, match="invalid_request_error"):
+            await bridge.run(twilio_ws)
+
+    asyncio.run(scenario())
+    messages = [message for _, message in lifecycle]
+    assert any(
+        "response.created observed response_id=resp-123 call_ids=call-7"
+        in message
+        for message in messages
+    )
+    assert any(
+        "error correlated_call_ids=none" in message
+        for message in messages
+    )
+
+
+def test_openai_rejection_is_correlated_to_pending_tool_call(monkeypatch):
+    lifecycle = []
+
+    async def scenario():
+        openai_error = json.dumps({
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": "busy"},
+        })
+        oai_ws = FakeOpenAIWebSocket([openai_error])
+        twilio_ws = FakeTwilioWebSocket(
+            [start_event()], wait_for_mark=True
+        )
+        bridge = make_bridge(monkeypatch, oai_ws, lifecycle)
+        bridge._pending_response_call_ids = ["call-8"]
+
+        with pytest.raises(RuntimeError, match="invalid_request_error"):
+            await bridge.run(twilio_ws)
+
+    asyncio.run(scenario())
+    assert any(
+        category == "OPENAI"
+        and "error correlated_call_ids=call-8" in message
+        for category, message in lifecycle
+    )
+
+
+def test_tool_timing_and_continuation_logs_are_correlated(monkeypatch):
+    logs = []
+
+    async def scenario():
+        bridge = make_tool_call_bridge()
+        ws = FakeOpenAIWebSocket()
+        monkeypatch.setattr(
+            realtime_bridge,
+            "execute_tool",
+            lambda *args, **kwargs: {"ok": True},
+        )
+        monkeypatch.setattr(
+            realtime_bridge,
+            "devlog",
+            lambda category, message: logs.append((category, message)),
+        )
+
+        await bridge._handle_tool_calls(
+            ws, function_call_event("completed", ["get_available_slots"])
+        )
+
+    asyncio.run(scenario())
+    messages = [message for _, message in logs]
+    assert "started name=get_available_slots call_id=call-1" in messages
+    assert any(
+        message.startswith(
+            "completed name=get_available_slots call_id=call-1 elapsed_ms="
+        )
+        for message in messages
+    )
+    assert "function output sent name=get_available_slots call_id=call-1" in messages
+    assert "response.create requested call_ids=call-1" in messages

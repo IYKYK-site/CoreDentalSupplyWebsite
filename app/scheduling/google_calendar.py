@@ -2,7 +2,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import os
+import threading
 
+import httplib2
+from google_auth_httplib2 import AuthorizedHttp
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -31,7 +34,26 @@ class GoogleCalendarScheduler(Scheduler):
         self.tz = ZoneInfo(config.office.timezone)
         self.calendar_id = config.appointments.calendar_id
         self.creds = self._load_credentials()
-        self.service = build("calendar", "v3", credentials=self.creds, cache_discovery=False)
+        self._service_lock = threading.RLock()
+        authorized_http = AuthorizedHttp(
+            self.creds,
+            http=httplib2.Http(timeout=20),
+        )
+        self.service = build(
+            "calendar",
+            "v3",
+            http=authorized_http,
+            cache_discovery=False,
+        )
+
+    def _execute(self, request_factory):
+        """Serialize access to the shared, non-thread-safe Google client."""
+        lock = getattr(self, "_service_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._service_lock = lock
+        with lock:
+            return request_factory().execute(num_retries=0)
 
     def _load_credentials(self):
         token_file = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
@@ -90,7 +112,9 @@ class GoogleCalendarScheduler(Scheduler):
             "items": [{"id": self.calendar_id}],
         }
 
-        fb = self.service.freebusy().query(body=body).execute()
+        fb = self._execute(
+            lambda: self.service.freebusy().query(body=body)
+        )
 
         busy = [
             (
@@ -291,18 +315,17 @@ class GoogleCalendarScheduler(Scheduler):
                     "patient_phone": patient_phone,
                     "patient_dob": patient_dob,
                     "provider_id": provider_id,
+                    "service": reason,
                     "source": "core-ai-receptionist-poc",
                 }
             },
         }
 
-        created = (
-            self.service.events()
-            .insert(
+        created = self._execute(
+            lambda: self.service.events().insert(
                 calendarId=self.calendar_id,
                 body=event,
             )
-            .execute()
         )
 
         return self._to_appointment(created)
@@ -325,7 +348,9 @@ class GoogleCalendarScheduler(Scheduler):
         if patient_phone:
             kwargs["privateExtendedProperty"] = f"patient_phone={patient_phone}"
 
-        events = self.service.events().list(**kwargs).execute().get("items", [])
+        events = self._execute(
+            lambda: self.service.events().list(**kwargs)
+        ).get("items", [])
 
         out = []
 
@@ -345,8 +370,57 @@ class GoogleCalendarScheduler(Scheduler):
 
         return out
 
+    def find_today_appointments(
+        self,
+        patient_phone="",
+        patient_name="",
+        patient_dob="",
+    ):
+        """Query today's appointments directly from Google Calendar."""
+
+        today = self._now().date().isoformat()
+        day_start, day_end = self._day_bounds(today)
+        kwargs = {
+            "calendarId": self.calendar_id,
+            "timeMin": day_start.isoformat(),
+            "timeMax": day_end.isoformat(),
+            "singleEvents": True,
+            "orderBy": "startTime",
+            "maxResults": 50,
+        }
+        if patient_phone and not (patient_name and patient_dob):
+            kwargs["privateExtendedProperty"] = (
+                f"patient_phone={patient_phone}"
+            )
+
+        events = self._execute(
+            lambda: self.service.events().list(**kwargs)
+        ).get("items", [])
+        matches = []
+
+        for event in events:
+            appointment = self._to_appointment(event)
+            private = event.get("extendedProperties", {}).get("private", {})
+
+            if (
+                patient_name
+                and patient_name.strip().casefold()
+                != appointment.patient_name.strip().casefold()
+            ):
+                continue
+            if patient_dob and private.get("patient_dob", "") != patient_dob:
+                continue
+
+            matches.append(appointment)
+
+        return matches
+
     def reschedule_appointment(self, appointment_id, new_start_iso):
-        event = self.service.events().get(calendarId=self.calendar_id, eventId=appointment_id).execute()
+        event = self._execute(
+            lambda: self.service.events().get(
+                calendarId=self.calendar_id, eventId=appointment_id
+            )
+        )
         old_start = datetime.fromisoformat(event["start"]["dateTime"])
         old_end = datetime.fromisoformat(event["end"]["dateTime"])
         duration = old_end - old_start
@@ -358,13 +432,21 @@ class GoogleCalendarScheduler(Scheduler):
 
         event["start"] = {"dateTime": new_start.isoformat(), "timeZone": self.config.office.timezone}
         event["end"] = {"dateTime": new_end.isoformat(), "timeZone": self.config.office.timezone}
-        updated = self.service.events().update(
-            calendarId=self.calendar_id, eventId=appointment_id, body=event
-        ).execute()
+        updated = self._execute(
+            lambda: self.service.events().update(
+                calendarId=self.calendar_id,
+                eventId=appointment_id,
+                body=event,
+            )
+        )
         return self._to_appointment(updated)
 
     def cancel_appointment(self, appointment_id):
-        self.service.events().delete(calendarId=self.calendar_id, eventId=appointment_id).execute()
+        self._execute(
+            lambda: self.service.events().delete(
+                calendarId=self.calendar_id, eventId=appointment_id
+            )
+        )
         return True
 
     def _to_appointment(self, event):
@@ -373,6 +455,13 @@ class GoogleCalendarScheduler(Scheduler):
         props = event.get("extendedProperties", {}).get("private", {})
         summary = event.get("summary", "")
         patient = summary.removeprefix("Dental Appointment - ").strip()
+        service = props.get("service", "")
+        if not service:
+            for line in event.get("description", "").splitlines():
+                label, separator, value = line.partition(":")
+                if separator and label.strip().casefold() == "reason / procedure":
+                    service = value.strip()
+                    break
         return Appointment(
             id=event["id"],
             patient_name=patient,
@@ -381,4 +470,5 @@ class GoogleCalendarScheduler(Scheduler):
             start=start,
             end=end,
             status=event.get("status", "confirmed"),
+            service=service,
         )

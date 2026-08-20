@@ -19,6 +19,7 @@ class Appointment:
     start: datetime
     end: datetime
     status: str = "confirmed"
+    service: str = ""
 
 
 class Scheduler(ABC):
@@ -35,6 +36,15 @@ class Scheduler(ABC):
 
     @abstractmethod
     def find_appointments(self, patient_name: str = "", patient_phone: str = "") -> list[Appointment]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_today_appointments(
+        self,
+        patient_phone: str = "",
+        patient_name: str = "",
+        patient_dob: str = "",
+    ) -> list[Appointment]:
         raise NotImplementedError
 
     @abstractmethod

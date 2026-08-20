@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import os
+import time
 import websockets
 import ssl
 import certifi
@@ -32,6 +33,8 @@ class RealtimeTwilioBridge:
         self.api_key = os.environ["OPENAI_API_KEY"]
         self.caller_number = None
         self.call_sid = None
+        self._processed_tool_call_ids = set()
+        self._pending_response_call_ids = []
 
         self.twilio_client = Client(
             os.environ["TWILIO_ACCOUNT_SID"],
@@ -148,7 +151,30 @@ class RealtimeTwilioBridge:
                                         "streamSid": stream_sid,
                                         "mark": {"name": "end_call"},
                                     })
+                            elif et == "response.created":
+                                pending = getattr(
+                                    self, "_pending_response_call_ids", []
+                                )
+                                response_id = event.get("response", {}).get(
+                                    "id", "unknown"
+                                )
+                                devlog(
+                                    "TOOL",
+                                    "response.created observed "
+                                    f"response_id={response_id} "
+                                    f"call_ids={','.join(pending) or 'none'}",
+                                )
+                                self._pending_response_call_ids = []
                             elif et == "error":
+                                pending = getattr(
+                                    self, "_pending_response_call_ids", []
+                                )
+                                devlog(
+                                    "OPENAI",
+                                    "error correlated_call_ids="
+                                    f"{','.join(pending) or 'none'} "
+                                    f"detail={event.get('error', event)}",
+                                )
                                 raise RuntimeError(
                                     "OpenAI Realtime error: "
                                     f"{event.get('error', event)}"
@@ -258,18 +284,37 @@ class RealtimeTwilioBridge:
         response = response_done_event.get("response", {})
         outputs = response.get("output", [])
 
-        made_call = False
         end_call_requested = False
+        tool_outputs_sent = 0
+        continued_call_ids = []
+        processed_call_ids = getattr(
+            self, "_processed_tool_call_ids", None
+        )
+        if processed_call_ids is None:
+            processed_call_ids = set()
+            self._processed_tool_call_ids = processed_call_ids
 
         for item in outputs:
             if item.get("type") != "function_call":
                 continue
 
-            made_call = True
-
             call_id = item["call_id"]
             name = item["name"]
             args = json.loads(item.get("arguments") or "{}")
+
+            if call_id in processed_call_ids:
+                devlog(
+                    "TOOL",
+                    f"duplicate ignored name={name} call_id={call_id}",
+                )
+                continue
+
+            # Record before starting work. Cancellation of asyncio.to_thread()
+            # cannot stop the underlying operation, so a repeated Realtime
+            # event must never launch the same mutation a second time.
+            processed_call_ids.add(call_id)
+            started = time.perf_counter()
+            devlog("TOOL", f"started name={name} call_id={call_id}")
 
             try:
                 if name == "send_sms":
@@ -278,21 +323,38 @@ class RealtimeTwilioBridge:
                             "Caller phone number is unavailable for SMS."
                         )
 
-                    result = send_sms(
+                    result = await asyncio.to_thread(
+                        send_sms,
                         phone_number=self.caller_number,
                         message_name=args["message_name"],
                         variables=args.get("variables"),
                     )
 
                 else:
-                    result = execute_tool(
+                    if (
+                        name == "check_late_arrival_status"
+                        and self.caller_number
+                        and self.caller_number != "Unknown"
+                    ):
+                        args.setdefault("patient_phone", self.caller_number)
+
+                    result = await asyncio.to_thread(
+                        execute_tool,
                         self.scheduler,
                         name,
                         args,
+                        config=self.config,
                     )
 
             except Exception as exc:
                 result = {"error": str(exc)}
+            finally:
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                devlog(
+                    "TOOL",
+                    f"completed name={name} call_id={call_id} "
+                    f"elapsed_ms={elapsed_ms:.0f}",
+                )
 
             if result.get("end_call"):
                 end_call_requested = True
@@ -305,13 +367,21 @@ class RealtimeTwilioBridge:
                     "output": json.dumps(result),
                 },
             }))
+            tool_outputs_sent += 1
+            continued_call_ids.append(call_id)
+            devlog(
+                "TOOL", f"function output sent name={name} call_id={call_id}"
+            )
 
-        if made_call and not end_call_requested:
-            response_status = response.get("status")
-
-            if response_status == "completed":
-                await ws.send(json.dumps({
-                    "type": "response.create"
-                }))
+        if tool_outputs_sent and not end_call_requested:
+            self._pending_response_call_ids = continued_call_ids
+            await ws.send(json.dumps({
+                "type": "response.create"
+            }))
+            devlog(
+                "TOOL",
+                "response.create requested call_ids="
+                f"{','.join(continued_call_ids)}",
+            )
 
         return end_call_requested

@@ -1,6 +1,7 @@
 import os
 
 import yaml
+from twilio.http.http_client import TwilioHttpClient
 from twilio.rest import Client
 
 
@@ -57,6 +58,7 @@ def send_sms(
     client = Client(
         os.environ["TWILIO_ACCOUNT_SID"],
         os.environ["TWILIO_AUTH_TOKEN"],
+        http_client=TwilioHttpClient(timeout=20, max_retries=0),
     )
 
     kwargs = {

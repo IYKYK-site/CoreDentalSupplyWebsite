@@ -91,6 +91,27 @@ appointments:
   slot_increment_minutes: 30
   default_buffer_minutes: 0
 
+late_arrival:
+  grace_period_minutes: 10
+  escalation_threshold_minutes: 11
+  reschedule_threshold_minutes: 30
+  behaviors:
+    within_grace:
+      action: "still_come"
+      message: >-
+        You are within the office's normal grace period and may still come
+        to your appointment.
+    escalation:
+      action: "reschedule"
+      message: >-
+        You are beyond the normal grace period. We can look for another
+        appointment time.
+    reschedule:
+      action: "reschedule"
+      message: >-
+        Based on the office's late-arrival policy, we should look for another
+        appointment time.
+
 fallback:
   phone: "305-773-3604"
   enabled: true

@@ -10,7 +10,7 @@ class FakeRequest:
     def __init__(self, response):
         self.response = response
 
-    def execute(self):
+    def execute(self, **kwargs):
         return self.response
 
 
