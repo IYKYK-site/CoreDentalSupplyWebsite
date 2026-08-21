@@ -8,11 +8,7 @@ office:
 
 receptionist:
   name: "Claudia"
-  greeting: >
-    Thank you for calling Dr. Novoa's office.
-    I'm Claudia, the office's AI assistant.
-    How may I help you today?
-    Hablo español, mwen pale Kreyòl, também falo português.
+  greeting: "Hi, thanks for calling Dr. Novoa’s office. I’m Claudia, the office’s AI assistant—how can I help? También hablo español."
 
 providers:
   - id: "dr_novoa"

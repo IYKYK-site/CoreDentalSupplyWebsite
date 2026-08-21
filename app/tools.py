@@ -45,7 +45,10 @@ def tool_definitions():
         {
             "type": "function",
             "name": "find_appointment",
-            "description": "Find upcoming appointments for a caller before rescheduling or cancellation.",
+            "description": (
+                "Find upcoming appointments for a caller before rescheduling or "
+                "cancellation. Results include natural spoken dates and times."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -93,7 +96,10 @@ def tool_definitions():
         {
             "type": "function",
             "name": "reschedule_appointment",
-            "description": "Move an existing appointment to a new confirmed start time.",
+            "description": (
+                "Move an existing appointment only after the caller confirmed "
+                "that specific located appointment and the new start time."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -252,7 +258,7 @@ def execute_tool(
             patient_phone=args.get("patient_phone", ""),
             patient_dob=args.get("patient_dob", ""),
         )
-        return {"appointments": [appointment_dict(a) for a in items]}
+        return {"appointments": [appointment_lookup_dict(a) for a in items]}
 
     if name == "check_late_arrival_status":
         if config is None:
@@ -363,3 +369,21 @@ def appointment_dict(a):
         "end": a.end.isoformat(),
         "status": a.status,
     }
+
+
+def appointment_lookup_dict(a):
+    appointment = appointment_dict(a)
+    spoken_time, spoken_date = natural_appointment_start(a.start)
+    appointment["spoken_time"] = spoken_time
+    appointment["spoken_date"] = spoken_date
+    return appointment
+
+
+def natural_appointment_start(start):
+    hour = start.strftime("%I").lstrip("0") or "12"
+    spoken_time = f"{hour}:{start.strftime('%M')} {start.strftime('%p')}"
+    spoken_date = (
+        f"{start.strftime('%A')}, {start.strftime('%B')} "
+        f"{start.day}, {start.year}"
+    )
+    return spoken_time, spoken_date

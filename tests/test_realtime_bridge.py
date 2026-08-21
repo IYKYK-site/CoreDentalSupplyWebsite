@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -115,6 +116,72 @@ def make_bridge(monkeypatch, oai_ws, lifecycle=None):
             lambda category, message: lifecycle.append((category, message)),
         )
     return bridge
+
+
+def make_initialized_bridge(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC123")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "test-token")
+    monkeypatch.setattr(realtime_bridge, "Client", lambda *args: object())
+    return RealtimeTwilioBridge(config=object(), scheduler=object())
+
+
+def test_realtime_model_defaults_to_2_1(monkeypatch):
+    monkeypatch.delenv("OPENAI_REALTIME_MODEL", raising=False)
+
+    bridge = make_initialized_bridge(monkeypatch)
+
+    assert bridge.model == "gpt-realtime-2.1"
+
+
+def test_realtime_model_environment_override_is_preserved(monkeypatch):
+    monkeypatch.setenv("OPENAI_REALTIME_MODEL", "custom-realtime-model")
+
+    bridge = make_initialized_bridge(monkeypatch)
+
+    assert bridge.model == "custom-realtime-model"
+
+
+def test_realtime_session_audio_configuration_is_unchanged():
+    async def scenario():
+        bridge = object.__new__(RealtimeTwilioBridge)
+        bridge.config = SimpleNamespace(
+            system_prompt=lambda: "test prompt",
+            receptionist=SimpleNamespace(greeting="Test greeting"),
+        )
+        ws = FakeOpenAIWebSocket()
+
+        await bridge._configure(ws)
+
+        session = ws.sent[0]["session"]
+        assert session["type"] == "realtime"
+        assert session["instructions"] == "test prompt"
+        assert session["tool_choice"] == "auto"
+        assert session["audio"] == {
+            "input": {
+                "format": {"type": "audio/pcmu"},
+                "noise_reduction": {"type": "far_field"},
+                "turn_detection": {
+                    "type": "semantic_vad",
+                    "eagerness": "high",
+                    "create_response": True,
+                    "interrupt_response": True,
+                },
+            },
+            "output": {
+                "format": {"type": "audio/pcmu"},
+                "voice": "coral",
+                "speed": 1.0,
+            },
+        }
+        assert ws.sent[1] == {
+            "type": "response.create",
+            "response": {
+                "instructions": 'Say this greeting naturally: "Test greeting"'
+            },
+        }
+
+    asyncio.run(scenario())
 
 
 def test_twilio_stop_closes_openai_and_creates_exactly_two_tasks(

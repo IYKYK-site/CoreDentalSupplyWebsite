@@ -29,7 +29,7 @@ class RealtimeTwilioBridge:
     def __init__(self, config, scheduler):
         self.config = config
         self.scheduler = scheduler
-        self.model = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2")
+        self.model = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1")
         self.api_key = os.environ["OPENAI_API_KEY"]
         self.caller_number = None
         self.call_sid = None
@@ -265,7 +265,7 @@ class RealtimeTwilioBridge:
                     },
                     "output": {
                         "format": {"type": "audio/pcmu"},
-                        "voice": "marin",
+                        "voice": "coral",
                         "speed": 1.0,
                     },
                 },
